@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-04-13T00:47:52.938923Z",
+  "repo": "Leo4j/Invoke-ADEnum",
+  "summary": {
+    "files_analyzed": 0,
+    "total_py_files": 0,
+    "tests_generated": 0,
+    "passed": 0,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 0.0,
+    "coverage_pct": -1.0
+  },
+  "critical_failures": [],
+  "modules": [],
+  "tests_metadata": [],
+  "test_results": []
+}

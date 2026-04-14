@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-04-13T00:29:22.669553Z",
+  "repo": "Mohnish-140605/DBOT-with-Typescript-and-RAG-model",
+  "summary": {
+    "files_analyzed": 0,
+    "tests_generated": 0,
+    "passed": 0,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 0.0,
+    "coverage_pct": -1.0
+  },
+  "critical_failures": [],
+  "modules": [],
+  "test_results": []
+}
