@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 from utils.helpers import emit_pipeline_log
@@ -36,7 +37,8 @@ def run_executor(state: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="agentqa_") as tmpdir:
         # Materialize fetched repo code so pytest/mutmut have real source to run against.
         repo_root = os.path.join(tmpdir, "repo")
-        tests_root = os.path.join(tmpdir, "tests")
+        # If using Docker execution, keep generated tests under repo_root so we can `docker cp` one folder.
+        tests_root = os.path.join(repo_root, "_agentqa_tests") if use_docker else os.path.join(tmpdir, "tests")
         os.makedirs(repo_root, exist_ok=True)
         os.makedirs(tests_root, exist_ok=True)
         _materialize_repo(repo_data, repo_root)
@@ -117,7 +119,28 @@ def _run_pytest(test_path: str, cwd: str, use_docker: bool = False, tests_dir: s
             env["PYTHONPATH"] = os.pathsep.join([cwd, env.get("PYTHONPATH", "")]).strip(os.pathsep)
 
         if use_docker:
-            cmd = _docker_pytest_command(test_path, cwd, tests_dir=tests_dir)
+            # Run in a disposable Docker container; copy repo contents into it.
+            output, rc = _docker_exec_repo(
+                repo_root=cwd,
+                sh_cmd=(
+                    "pip install -q pytest pytest-cov mutmut >/dev/null 2>&1 && "
+                    f"pytest '/work/{os.path.basename(tests_dir)}/{os.path.basename(test_path)}' "
+                    "--tb=short -q --no-header "
+                    "--cov=/work --cov-report=term-missing --cov-report=term"
+                ),
+                timeout_s=240,
+            )
+            passed = rc == 0
+            failed = rc != 0
+            errors = output.count("ERROR")
+            coverage_pct = _parse_coverage(output)
+            return {
+                "passed": passed,
+                "failed": failed,
+                "errors": errors,
+                "output": output.strip(),
+                "coverage_pct": coverage_pct,
+            }
         else:
             cmd = [
                 sys.executable, "-m", "pytest",
@@ -194,43 +217,25 @@ def _mutation_status_reason(enabled: bool) -> str:
 
 
 def _docker_pytest_command(test_path: str, cwd: str, tests_dir: str | None = None) -> list[str]:
-    unix_dir = cwd.replace("\\", "/")
-    unix_test = test_path.replace("\\", "/")
-    unix_tests_dir = (tests_dir or "").replace("\\", "/")
-    py_path = "/work"
-    if unix_tests_dir:
-        # tests_dir is outside container workdir when mounted; we mount it too.
-        # In our current layout, tests_dir is a sibling of cwd, so we mount parent temp dir at /mnt.
-        # For simplicity, we ensure tests live under repo root when docker is used by copying them there.
-        pass
-    return [
-        "docker", "run", "--rm",
-        "-v", f"{unix_dir}:/work",
-        "-w", "/work",
-        "python:3.11-slim",
-        "sh", "-lc",
-        (
-            "pip install -q pytest pytest-cov mutmut >/dev/null 2>&1 && "
-            f"pytest '{unix_test}' --tb=short -q --no-header "
-            f"--cov='{unix_dir}' --cov-report=term-missing --cov-report=term"
-        ),
-    ]
+    # We avoid bind mounts so Docker execution works even when the backend itself runs in Docker.
+    # Strategy:
+    # - `docker create` a disposable python container
+    # - `docker cp` the materialized repo folder into /work
+    # - `docker start -a` to run pytest
+    # - remove container
+    return ["__agentqa_docker__", "pytest", test_path, cwd]
 
 
 def _run_mutmut_score(cwd: str, use_docker: bool = False) -> float:
     """Run mutmut and approximate mutation score from summary output."""
     try:
         if use_docker:
-            unix_dir = cwd.replace("\\", "/")
-            cmd = [
-                "docker", "run", "--rm",
-                "-v", f"{unix_dir}:/work",
-                "-w", "/work",
-                "python:3.11-slim",
-                "sh", "-lc",
-                "pip install -q pytest mutmut >/dev/null 2>&1 && mutmut run",
-            ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=240, cwd=cwd)
+            output, _rc = _docker_exec_repo(
+                repo_root=cwd,
+                sh_cmd="pip install -q pytest mutmut >/dev/null 2>&1 && mutmut run",
+                timeout_s=600,
+            )
+            return _parse_mutmut_score(output)
         elif os.name == "nt":
             # On Windows, mutmut might have multiprocessing issues, but we attempt native execution anyway 
             # since WSL might not have pip/python3 correctly configured in the user's environment.
@@ -328,3 +333,43 @@ def _write_mutmut_config(repo_data: dict, repo_root: str) -> None:
     )
     with open(cfg, "w", encoding="utf-8") as fh:
         fh.write(content)
+
+
+def _docker_exec_repo(repo_root: str, sh_cmd: str, timeout_s: int = 240) -> tuple[str, int]:
+    """
+    Execute a shell command in a fresh python container with repo_root copied into /work.
+    Requires Docker daemon access (host docker or mounted /var/run/docker.sock).
+    """
+    name = f"agentqa-exec-{uuid.uuid4().hex[:10]}"
+    created = False
+    try:
+        create = subprocess.run(
+            ["docker", "create", "--name", name, "-w", "/work", "python:3.11-slim", "sh", "-lc", sh_cmd],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if create.returncode != 0:
+            raise RuntimeError((create.stderr or create.stdout or "docker create failed").strip())
+        created = True
+
+        cp = subprocess.run(
+            ["docker", "cp", f"{repo_root}{os.sep}.", f"{name}:/work"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if cp.returncode != 0:
+            raise RuntimeError((cp.stderr or cp.stdout or "docker cp failed").strip())
+
+        run = subprocess.run(
+            ["docker", "start", "-a", name],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+        out = (run.stdout or "") + "\n" + (run.stderr or "")
+        return out, int(run.returncode)
+    finally:
+        if created:
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True, timeout=20)
