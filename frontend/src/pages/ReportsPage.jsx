@@ -1,7 +1,7 @@
 // Reports History Page
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Download, FileText, RefreshCw } from 'lucide-react'
+import { Download, FileText, RefreshCw, Braces } from 'lucide-react'
 
 const API_BASE = (import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || '').trim()
 
@@ -73,6 +73,7 @@ export default function ReportsPage() {
                 <th>Tests</th>
                 <th>Pass Rate</th>
                 <th>Coverage</th>
+                <th>Runtime</th>
                 <th></th>
               </tr>
             </thead>
@@ -82,6 +83,10 @@ export default function ReportsPage() {
                 const total = (summary.passed || 0) + (summary.failed || 0)
                 const passRate = total ? ((summary.passed / total) * 100).toFixed(1) : '—'
                 const cov = summary.coverage_pct >= 0 ? `${summary.coverage_pct}%` : '—'
+                const runtimeSecs = summary?.execution_time?.total_seconds
+                const runtime = typeof runtimeSecs === 'number' && Number.isFinite(runtimeSecs)
+                  ? `${runtimeSecs.toFixed(1)}s`
+                  : '—'
 
                 return (
                   <tr key={i} onClick={() => navigate(`/reports/${r.id || i}`, { state: { report: r } })}>
@@ -94,8 +99,24 @@ export default function ReportsPage() {
                       {passRate !== '—' ? `${passRate}%` : '—'}
                     </td>
                     <td style={{ color: 'var(--text-dim)' }}>{cov}</td>
+                    <td style={{ color: 'var(--text-dim)' }}>{runtime}</td>
                     <td>
-                      {r.pdf_url && (
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        {r.json_url && (
+                          <a
+                            href={r.json_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            className="btn-outline"
+                            style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem' }}
+                            title="Download JSON"
+                          >
+                            <Braces size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                            JSON
+                          </a>
+                        )}
+                        {r.pdf_url && (
                         <a
                           href={r.pdf_url}
                           target="_blank"
@@ -108,6 +129,7 @@ export default function ReportsPage() {
                           PDF
                         </a>
                       )}
+                      </div>
                     </td>
                   </tr>
                 )

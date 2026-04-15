@@ -3,6 +3,7 @@ import asyncio
 import json
 import uuid
 import os
+import time
 from queue import Queue, Empty
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse, FileResponse
@@ -53,6 +54,8 @@ async def _run_pipeline(job_id: str, github_url: str):
     emit_state = {"_event_queue": event_queue}
 
     try:
+        gh_start = time.perf_counter()
+        gh_start_ms = int(time.time() * 1000)
         event_queue.put({"type": "step", "data": {"step": "GitHub Fetch", "status": "running"}})
         emit_pipeline_log(emit_state, "Fetching repository structure from GitHub...", "system", "GitHub Fetch")
         print("[PIPELINE] GitHub Fetch: starting", file=sys.stderr)
@@ -60,6 +63,8 @@ async def _run_pipeline(job_id: str, github_url: str):
         loop = asyncio.get_event_loop()
         repo_data = await loop.run_in_executor(None, fetch_repo_structure, github_url)
         print(f"[PIPELINE] GitHub Fetch: completed, error={bool(repo_data.get('error'))}", file=sys.stderr)
+        gh_dur_ms = int((time.perf_counter() - gh_start) * 1000)
+        gh_end_ms = int(time.time() * 1000)
 
         if isinstance(repo_data, dict) and repo_data.get("error"):
             error_msg = repo_data.get("error", "Repository fetch failed")
@@ -83,6 +88,13 @@ async def _run_pipeline(job_id: str, github_url: str):
             "repo_data": repo_data,
             "step_log": [],
             "_event_queue": event_queue,
+            "agent_timings": {
+                "GitHub Fetch": {
+                    "started_at_ms": gh_start_ms,
+                    "ended_at_ms": gh_end_ms,
+                    "duration_ms": gh_dur_ms,
+                }
+            },
         }
 
         _jobs[job_id]["state"] = initial_state
@@ -223,6 +235,25 @@ async def download_pdf(job_id: str):
         filename="agentqa_report.pdf"
     )
 
+@router.get("/report/{job_id}/json")
+async def download_json(job_id: str):
+    # Downloads the generated JSON report for a completed analysis job
+    job = _jobs.get(job_id)
+    if not job or job["status"] != "done":
+        return {"error": "Report not ready yet"}
+
+    report = (job.get("state") or {}).get("report", {})
+    json_path = report.get("json_path", "")
+
+    if not json_path or not os.path.exists(json_path):
+        return {"error": "JSON not found"}
+
+    return FileResponse(
+        json_path,
+        media_type="application/json",
+        filename="agentqa_report.json"
+    )
+
 @router.get("/reports")
 async def list_reports():
     """Return a list of saved report JSON files with key metadata."""
@@ -239,6 +270,7 @@ async def list_reports():
             fname    = os.path.basename(fpath)
             pdf_name = fname.replace(".json", ".pdf")
             pdf_url  = f"/reports/{pdf_name}"
+            json_url = f"/reports/{fname}"
 
             results.append({
                 "id":           fname.replace("report_", "").replace(".json", ""),
@@ -246,6 +278,7 @@ async def list_reports():
                 "generated_at": data.get("generated_at"),
                 "summary":      data.get("summary", {}),
                 "pdf_url":      pdf_url,
+                "json_url":     json_url,
             })
         except Exception:
             continue

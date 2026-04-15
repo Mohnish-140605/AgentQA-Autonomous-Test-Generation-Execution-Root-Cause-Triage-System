@@ -21,6 +21,8 @@ def run_triage(state: dict) -> dict:
         if not isinstance(result, dict):
             continue
         explanation = _explain(result)
+        patch_suggestion = _build_patch_suggestion(result, explanation)
+        explanation = {**explanation, "patch_suggestion": patch_suggestion}
         triaged.append({**result, "triage": explanation["text"], "triage_meta": explanation})
 
     return {**state, "results": triaged}
@@ -136,12 +138,143 @@ def _extract_failing_line(output: str) -> str | None:
 
 
 def _explanation(code: str, text: str, severity: str, llm_used: bool = False) -> dict:
+    fix_plan = _suggest_fix_plan(code)
     return {
         "code": code,
         "text": text,
         "severity": severity,
         "llm_used": bool(llm_used),
+        "fix_recommendation": fix_plan["recommendation"],
+        "fix_steps": fix_plan["steps"],
+        "reliability_score": fix_plan["reliability_score"],
     }
+
+
+def _suggest_fix_plan(code: str) -> dict:
+    default = {
+        "recommendation": "Review the failure output and update code/tests incrementally.",
+        "steps": [
+            "Reproduce the issue locally with the failing test.",
+            "Inspect stack trace and align code behavior with expected output.",
+            "Add/adjust regression test to prevent recurrence.",
+        ],
+        "reliability_score": 60,
+    }
+    plans = {
+        "passed": {
+            "recommendation": "No bug fix required; maintain current behavior.",
+            "steps": [
+                "Keep this test in CI as a safety check.",
+                "Add one edge-case test to increase robustness.",
+            ],
+            "reliability_score": 95,
+        },
+        "import_error": {
+            "recommendation": "Fix import/module path resolution and package structure.",
+            "steps": [
+                "Verify module file exists at expected path and package has __init__.py.",
+                "Use absolute imports or correct relative imports consistently.",
+                "Ensure runtime environment installs required dependencies.",
+            ],
+            "reliability_score": 90,
+        },
+        "assertion_error": {
+            "recommendation": "Align function output with expected behavior or adjust incorrect assertions.",
+            "steps": [
+                "Compare expected vs actual values from failing assertion.",
+                "Trace function branches for edge inputs used by test.",
+                "Update function logic and add boundary regression tests.",
+            ],
+            "reliability_score": 85,
+        },
+        "timeout": {
+            "recommendation": "Remove blocking loops/slow calls and add timeout-safe logic.",
+            "steps": [
+                "Locate long-running loop or blocking I/O operation.",
+                "Add termination condition or guard for external calls.",
+                "Mock external dependencies in tests to keep runs deterministic.",
+            ],
+            "reliability_score": 80,
+        },
+        "type_error": {
+            "recommendation": "Validate input types and enforce clear argument contracts.",
+            "steps": [
+                "Add input validation at function entry.",
+                "Handle unsupported types with explicit errors/messages.",
+                "Add tests for invalid and coercible input types.",
+            ],
+            "reliability_score": 82,
+        },
+        "name_error": {
+            "recommendation": "Define missing symbols and fix variable scope/order.",
+            "steps": [
+                "Locate undefined symbol in stack trace and define/import it.",
+                "Check naming consistency and typo mismatches.",
+                "Refactor initialization order to avoid reference-before-definition.",
+            ],
+            "reliability_score": 88,
+        },
+        "execution_error": {
+            "recommendation": "Stabilize runtime dependencies and isolate failing side effects.",
+            "steps": [
+                "Capture full error traceback and failing setup context.",
+                "Mock external services/filesystem/network calls in tests.",
+                "Add defensive error handling around unstable integration points.",
+            ],
+            "reliability_score": 70,
+        },
+        "failed": {
+            "recommendation": "Investigate logic mismatch between implementation and expected behavior.",
+            "steps": [
+                "Reproduce failure with minimal input set.",
+                "Inspect branch decisions and returned values.",
+                "Patch logic and add focused regression test.",
+            ],
+            "reliability_score": 75,
+        },
+        "unclear": default,
+        "llm_triage": {
+            "recommendation": "Use traceback details to patch root cause, then verify with regression tests.",
+            "steps": [
+                "Apply fix guided by triage explanation.",
+                "Re-run failing tests and ensure no new regressions.",
+                "Document fix rationale in commit/report notes.",
+            ],
+            "reliability_score": 68,
+        },
+        "llm_fallback": {
+            "recommendation": "Manually validate LLM suggestion against traceback before patching.",
+            "steps": [
+                "Confirm the suspected root cause in code.",
+                "Implement minimal change first and re-run test suite.",
+                "Expand tests to lock expected behavior.",
+            ],
+            "reliability_score": 65,
+        },
+    }
+    return plans.get(code, default)
+
+
+def _build_patch_suggestion(result: dict, explanation: dict) -> str:
+    func = str(result.get("function", "function_name"))
+    target_file = str(result.get("target_file", "path/to/file.py"))
+    issue_code = str((explanation or {}).get("code", "issue"))
+    recommendation = str((explanation or {}).get("fix_recommendation", "Apply minimal fix and re-run tests."))
+    steps = (explanation or {}).get("fix_steps") or []
+    step_comments = "\n".join([f"# - {s}" for s in steps[:3]])
+    return "\n".join([
+        f"# Suggested patch for {func} ({issue_code})",
+        f"# File: {target_file}",
+        f"# Recommendation: {recommendation}",
+        step_comments,
+        "",
+        "*** Begin Patch",
+        f"*** Update File: {target_file}",
+        "@@",
+        "-# TODO: existing buggy logic",
+        "+# TODO: implement fix based on recommendation",
+        "*** End Patch",
+    ]).strip()
 
 
 def _safe_int(value: Any) -> int:

@@ -20,8 +20,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/agentqa.git
-cd agentqa
+git clone https://github.com/Mohnish-140605/AgentQA-Autonomous-Test-Generation-Execution-Root-Cause-Triage-System.git
+cd AgentQA-Autonomous-Test-Generation-Execution-Root-Cause-Triage-System
 
 # Copy and fill in API keys
 cp .env.example backend/.env
@@ -31,13 +31,16 @@ Edit `backend/.env`:
 
 ```
 GEMINI_API_KEY=your_google_gemini_api_key_here
-GITHUB_TOKEN=ghp_your_github_pat_here          # optional — raises rate limit from 60 → 5,000 req/hr
+GITHUB_TOKEN=your_github_pat_here              # optional — raises rate limit from 60 → 5,000 req/hr
+
+# Optional runtime toggles
+AGENTQA_ENABLE_MUTATION=1
+AGENTQA_DOCKER_EXEC=1
 ```
 
 ### 2 — Backend
 
 ```bash
-cd agentqa
 pip install -r requirements.txt
 
 cd backend
@@ -48,11 +51,28 @@ uvicorn main:app --reload --port 8000
 ### 3 — Frontend (new terminal)
 
 ```bash
-cd agentqa/frontend
+cd frontend
 npm install
 npm run dev
 # → Open http://localhost:5173
 ```
+
+---
+
+## Run with Docker (recommended)
+
+Requirements: Docker Desktop (Windows/macOS) or Docker Engine (Linux).
+
+```bash
+docker compose up --build
+```
+
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000` (docs at `/docs`)
+
+Notes:
+- Reports are persisted to `backend/reports/` via a volume.
+- **Do not commit** any `backend/.env` or `frontend/.env` files.
 
 ---
 
@@ -132,3 +152,31 @@ GitHub URL → GitHub Fetch → Code Analyst → Test Writer → Executor → Tr
 
 **`ModuleNotFoundError: No module named 'langgraph'`:**  
 → Run `pip install -r requirements.txt` from `agentqa/` (not from inside `backend/`).
+
+---
+
+## Compare + Mutation + Docker Execution
+
+- Use **Analyze & Compare** in the UI to run your repository against a second (buggy) repository.
+- Executor now computes:
+  - pass/fail + coverage
+  - **mutation score** using `mutmut`
+- Test execution prefers Docker isolation (falls back to local if Docker is unavailable).
+
+Optional toggle:
+
+```bash
+AGENTQA_DOCKER_EXEC=1   # default; tries Docker runtime for test execution
+AGENTQA_DOCKER_EXEC=0   # force local runtime
+AGENTQA_ENABLE_MUTATION=1  # enable mutmut mutation testing
+AGENTQA_ENABLE_MUTATION=0  # default; mutation testing disabled
+```
+
+If Docker is not installed or not available in PATH, AgentQA automatically falls back to local execution and reports the exact reason in the UI (`Execution Environment Status`).
+
+If mutation testing is enabled but `mutmut` is unavailable in the active runtime, mutation score is reported as unavailable.
+
+### Security note (important)
+
+- Never commit `backend/.env` or `frontend/.env`.
+- Generated reports in `backend/reports/` may contain runtime logs/errors. They are **gitignored**.

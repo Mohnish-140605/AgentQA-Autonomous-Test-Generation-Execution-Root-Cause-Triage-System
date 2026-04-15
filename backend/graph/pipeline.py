@@ -1,5 +1,6 @@
 # LangGraph pipeline orchestration for analysis workflow
 import asyncio
+import time
 import uuid
 import sys
 from typing import TypedDict
@@ -23,6 +24,8 @@ class AgentQAState(TypedDict, total=False):
     report: dict          # Final report
     step_log: list        # Progress tracking for SSE
     error: str            # Error messages
+    _event_queue: Queue   # Internal queue for real-time SSE events
+    agent_timings: dict   # step_name -> {duration_ms, started_at_ms, ended_at_ms}
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -36,11 +39,14 @@ def _wrap(agent_fn, step_name: str):
         q: Queue = state.get("_event_queue")
 
         log = list(state.get("step_log", []))
+        timings = dict(state.get("agent_timings", {}) or {})
+        start_ms = int(time.time() * 1000)
+        perf_start = time.perf_counter()
 
         # Emit RUNNING immediately before work starts
         running_entry = {"step": step_name, "status": "running"}
         log.append(running_entry)
-        state = {**state, "step_log": log}
+        state = {**state, "step_log": log, "agent_timings": timings}
         if q:
             q.put({"type": "step", "data": {"step": step_name, "status": "running"}})
             q.put({
@@ -59,6 +65,13 @@ def _wrap(agent_fn, step_name: str):
             state = agent_fn(state)
             print(f"[AGENT] {step_name}: completed successfully", file=sys.stderr)
             log[-1]["status"] = "done"
+            duration_ms = int((time.perf_counter() - perf_start) * 1000)
+            end_ms = int(time.time() * 1000)
+            timings[step_name] = {
+                "started_at_ms": start_ms,
+                "ended_at_ms": end_ms,
+                "duration_ms": duration_ms,
+            }
             if q:
                 q.put({"type": "step", "data": {"step": step_name, "status": "done"}})
                 q.put({
@@ -75,7 +88,16 @@ def _wrap(agent_fn, step_name: str):
             print(f"[AGENT] {step_name}: FAILED: {type(e).__name__}: {str(e)}", file=sys.stderr)
             log[-1]["status"] = "error"
             log[-1]["detail"] = str(e)
-            state = {**state, "step_log": log, "error": str(e)}
+            duration_ms = int((time.perf_counter() - perf_start) * 1000)
+            end_ms = int(time.time() * 1000)
+            timings[step_name] = {
+                "started_at_ms": start_ms,
+                "ended_at_ms": end_ms,
+                "duration_ms": duration_ms,
+                "status": "error",
+                "detail": str(e),
+            }
+            state = {**state, "step_log": log, "error": str(e), "agent_timings": timings}
             if q:
                 q.put({"type": "step", "data": {"step": step_name, "status": "error", "detail": str(e)}})
                 q.put({
@@ -89,7 +111,7 @@ def _wrap(agent_fn, step_name: str):
                     },
                 })
 
-        return state
+        return {**state, "agent_timings": timings}
 
     return wrapper
 

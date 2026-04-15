@@ -1,6 +1,9 @@
 // Report Detail Page — Full breakdown of a single report
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, FileCode2, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
+
+const API_BASE = (import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || '').trim()
 
 function statusColor(r) {
   if (r.passed && !r.failed) return 'var(--pass)'
@@ -17,7 +20,53 @@ function statusIcon(r) {
 export default function ReportDetail() {
   const { state } = useLocation()
   const navigate  = useNavigate()
-  const report    = state?.report
+  const { id } = useParams()
+  const [report, setReport] = useState(state?.report || null)
+  const [loading, setLoading] = useState(!state?.report)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (report) return
+    if (!id) return
+
+    const load = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const res = await fetch(`${API_BASE}/reports/report_${id}.json`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        setReport(data)
+      } catch (e) {
+        setError(e.message || String(e))
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [id, report])
+
+  if (loading) {
+    return (
+      <div className="page-content">
+        <div className="empty-state">
+          <span className="spinner" style={{ margin: '0 auto 0.5rem', display: 'block' }} />
+          Loading report…
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="page-content">
+        <div className="error-banner">Failed to load report: {error}</div>
+        <button className="btn-outline mt-2" onClick={() => navigate('/reports')}>
+          ← Back to Reports
+        </button>
+      </div>
+    )
+  }
 
   if (!report) {
     return (
@@ -36,6 +85,9 @@ export default function ReportDetail() {
   const modules = report.modules || []
   const results = report.test_results || []
   const critical = report.critical_failures || []
+  const quality = s.quality_score_pct != null ? `${s.quality_score_pct}%` : 'n/a'
+  const llmUtil = s.llm_utilization_pct != null ? `${s.llm_utilization_pct}%` : 'n/a'
+  const benchmark = s.benchmark || {}
 
   // Build a map: function name → triage result for quick lookup
   const resultMap = {}
@@ -75,6 +127,8 @@ export default function ReportDetail() {
             ['Passed',    s.passed          ?? 0,  'pass-color'],
             ['Failed',    s.failed          ?? 0,  'fail-color'],
             ['Coverage',  s.coverage_pct >= 0 ? `${s.coverage_pct}%` : 'n/a', 'gold-color'],
+            ['Quality',   quality, ''],
+            ['LLM Use',   llmUtil, 'info-color'],
           ].map(([label, val, cls]) => (
             <div key={label} className={`stat-card ${cls}`}>
               <div className="stat-value">{val}</div>
@@ -82,6 +136,23 @@ export default function ReportDetail() {
             </div>
           ))}
         </div>
+        {(benchmark.pass_rate_target_pct != null || benchmark.coverage_target_pct != null) && (
+          <div style={{ marginTop: '0.75rem', color: 'var(--text-dim)', fontSize: '0.78rem' }}>
+            Benchmark: Pass target {benchmark.pass_rate_target_pct ?? 'n/a'}% ({benchmark.pass_rate_score_pct ?? 'n/a'}%), Coverage target {benchmark.coverage_target_pct ?? 'n/a'}% ({benchmark.coverage_score_pct ?? 'n/a'}%).
+          </div>
+        )}
+        <div style={{ marginTop: '0.45rem', color: 'var(--text-dim)', fontSize: '0.78rem' }}>
+          LLM utilization: {s.llm_tests_enhanced ?? 0}/{s.llm_tests_total ?? 0} tests enhanced
+          {(s.llm_tests_failed ?? 0) > 0 ? ` | ${s.llm_tests_failed} fallbacks due to API/rate limits` : ''}.
+        </div>
+        <div style={{ marginTop: '0.35rem', color: 'var(--text-dim)', fontSize: '0.78rem' }}>
+          Gemini key configured: {s.gemini_configured ? 'Yes' : 'No'} | LLM attempts: {s.llm_tests_attempted ?? 0}
+        </div>
+        {s.llm_usage_reason && (
+          <div style={{ marginTop: '0.35rem', color: 'var(--text-dim)', fontSize: '0.78rem' }}>
+            Why this happened: {s.llm_usage_reason}
+          </div>
+        )}
       </div>
 
       {/* Critical failures */}
@@ -179,6 +250,12 @@ export default function ReportDetail() {
                       {r?.triage && (
                         <p style={{ marginTop: '0.3rem', fontSize: '0.77rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>
                           {r.triage}
+                        </p>
+                      )}
+                      {r?.triage_meta?.fix_recommendation && (
+                        <p style={{ marginTop: '0.25rem', fontSize: '0.76rem', color: 'var(--info)' }}>
+                          Fix: {r.triage_meta.fix_recommendation}
+                          {typeof r.triage_meta.reliability_score === 'number' ? ` (confidence ${r.triage_meta.reliability_score}%)` : ''}
                         </p>
                       )}
                     </div>

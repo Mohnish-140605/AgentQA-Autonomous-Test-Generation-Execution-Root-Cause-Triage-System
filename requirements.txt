@@ -13,3 +13,4 @@ coverage>=7.0.0
 python-multipart>=0.0.9
 python-dotenv>=1.0.1
 google-generativeai>=0.7.0
+mutmut>=2.5.0

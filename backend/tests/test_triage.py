@@ -31,4 +31,6 @@ def test_run_triage_import_error():
     result = run_triage(state)
 
     assert result["results"][0]["triage_meta"]["code"] == "import_error"
-    assert "could not import" in result["results"][0]["triage"].lower()
+    triage_text = result["results"][0]["triage"].lower()
+    assert "import" in triage_text
+    assert "module" in triage_text

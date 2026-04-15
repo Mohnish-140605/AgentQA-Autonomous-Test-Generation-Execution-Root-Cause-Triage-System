@@ -9,6 +9,9 @@ export default function ReportView({ report, jobId }) {
   const handleDownload = () => {
     window.open(`/report/${jobId}/pdf`, '_blank')
   }
+  const handleDownloadJson = () => {
+    window.open(`/report/${jobId}/json`, '_blank')
+  }
 
   return (
     <div className="card">
@@ -52,6 +55,73 @@ export default function ReportView({ report, jobId }) {
           <div className="stat-label">Errors</div>
         </div>
       </div>
+      {s.time_comparison && (
+        <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem', background: 'var(--bg-card)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
+          <h4 style={{ marginBottom: '0.8rem', color: 'var(--text-primary)' }}>LLM Utilization & QA Comparison</h4>
+          
+          <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+            <div>
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Estimated Manual Process:</span>
+              <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>{s.time_comparison.manual_estimated_mins} mins</div>
+            </div>
+            <div>
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Automated AgentQA Process:</span>
+              <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>{s.time_comparison.agent_measured_mins ?? '—'} mins</div>
+            </div>
+            <div>
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Time Saved:</span>
+              <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--text-success)' }}>{s.time_comparison.time_saved_mins} mins</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            <div><strong style={{ color: 'var(--text-primary)' }}>🤖 LLM (Gemini):</strong> {s.llm_utilization?.test_generation} | {s.llm_utilization?.triage}</div>
+            <div><strong style={{ color: 'var(--text-primary)' }}>🐳 Docker:</strong> {s.docker_available ? 'Enabled (Isolated test execution)' : `Disabled (${s.docker_reason || 'N/A'})`}</div>
+            <div><strong style={{ color: 'var(--text-primary)' }}>👾 Mutmut (Mutation Testing):</strong> {s.mutation_enabled ? 'Enabled (Robustness checks active)' : `Disabled (${s.mutation_reason || 'N/A'})`}</div>
+          </div>
+
+          {s.execution_time?.per_agent_seconds && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '0.85rem' }}>
+              <div style={{ color: 'var(--text-primary)', fontWeight: 700, marginBottom: '0.5rem' }}>
+                Execution time by agent
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.86rem', color: 'var(--text-dim)' }}>
+                {Object.entries(s.execution_time.per_agent_seconds).map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{k}</span>
+                    <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{typeof v === 'number' ? `${v.toFixed(2)}s` : '—'}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                  <span>Total</span>
+                  <span style={{ fontWeight: 800, color: 'var(--gold)' }}>
+                    {typeof s.execution_time.total_seconds === 'number' ? `${s.execution_time.total_seconds.toFixed(2)}s` : '—'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {s.time_comparison?.manual_breakdown_mins && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '0.85rem' }}>
+              <div style={{ color: 'var(--text-primary)', fontWeight: 700, marginBottom: '0.5rem' }}>
+                Manual-equivalent time breakdown (est.)
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.86rem', color: 'var(--text-dim)' }}>
+                {Object.entries(s.time_comparison.manual_breakdown_mins).map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{k.replace(/_/g, ' ')}</span>
+                    <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{typeof v === 'number' ? `${v} min` : '—'}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                Assumptions: {s.time_comparison?.assumptions ? Object.entries(s.time_comparison.assumptions).map(([k, v]) => `${k}=${v}`).join(', ') : '—'}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 
         Detailed test results table
@@ -118,6 +188,14 @@ export default function ReportView({ report, jobId }) {
         title="Download PDF report"
       >
         ↓ Download PDF Report
+      </button>
+
+      <button
+        className="btn-outline mt-2"
+        onClick={handleDownloadJson}
+        title="Download JSON report"
+      >
+        Download JSON Report
       </button>
 
       {/* 
