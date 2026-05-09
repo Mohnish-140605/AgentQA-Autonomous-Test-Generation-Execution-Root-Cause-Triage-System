@@ -219,3 +219,6 @@ If mutation testing is enabled but `mutmut` is unavailable in the active runtime
 
 - Never commit `backend/.env` or `frontend/.env`.
 - Generated reports in `backend/reports/` may contain runtime logs/errors. They are **gitignored**.
+
+
+More colloborators working towards this will help us build the project in a better way
